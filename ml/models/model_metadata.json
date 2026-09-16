@@ -1,0 +1,83 @@
+{
+  "model_name": "TrafficSense_BiLSTM_V2",
+  "lookback_observations": 12,
+  "observation_interval_minutes": 5,
+  "total_historical_window_minutes": 60,
+  "architecture": {
+    "type": "Bidirectional_LSTM",
+    "layers": [
+      {
+        "type": "Bidirectional(LSTM)",
+        "units": 64,
+        "return_sequences": true
+      },
+      {
+        "type": "Dropout",
+        "rate": 0.2
+      },
+      {
+        "type": "Bidirectional(LSTM)",
+        "units": 32,
+        "return_sequences": false
+      },
+      {
+        "type": "Dense",
+        "units": 16,
+        "activation": "relu"
+      },
+      {
+        "type": "Dense",
+        "units": 1,
+        "activation": "linear"
+      }
+    ],
+    "loss": "Huber / MSE",
+    "optimizer": "Adam(lr=0.001)",
+    "log1p_transform": true
+  },
+  "evaluation_metrics": {
+    "mae": 8.98,
+    "rmse": 11.53,
+    "r2": 0.9157,
+    "smape": 5.55
+  },
+  "scaling_parameters": {
+    "min_log_volume": 4.04305126783455,
+    "max_log_volume": 5.564520407322694,
+    "volume_range": 1.5214691394881434
+  },
+  "model_benchmarks": [
+    {
+      "model": "Random Forest Baseline",
+      "mae": 50121.55,
+      "rmse": 122169.63,
+      "r2": 0.5847,
+      "smape": 48.2,
+      "verdict": "Unsatisfactory, high error on raw counts"
+    },
+    {
+      "model": "Random Forest V2",
+      "mae": 116403.57,
+      "rmse": 253911.56,
+      "r2": -1.044,
+      "smape": 163.06,
+      "verdict": "Severe over-prediction, negative R\u00b2"
+    },
+    {
+      "model": "Random Forest V3",
+      "mae": 146088.74,
+      "rmse": 266605.9,
+      "r2": -1.2535,
+      "smape": 1103.66,
+      "verdict": "Total breakdown under test split"
+    },
+    {
+      "model": "BiLSTM V2 (Proposed)",
+      "mae": 8.98,
+      "rmse": 11.53,
+      "r2": 0.9157,
+      "smape": 5.55,
+      "verdict": "High accuracy, stable temporal alignment"
+    }
+  ]
+}

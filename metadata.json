@@ -1,0 +1,6 @@
+{
+  "name": "TrafficSense AI",
+  "description": "Intelligent Traffic Prediction and Management System with BiLSTM Time-Series Forecasting, Junction Monitoring, and Alerts",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
