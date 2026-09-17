@@ -1,0 +1,26 @@
+{
+  "raw_rows": 1449,
+  "clean_rows": 1208,
+  "locations": [
+    "AlankarChowk",
+    "JehangirChowk",
+    "RTOChowk"
+  ],
+  "cameras": [
+    "a2",
+    "a3",
+    "j1",
+    "j2",
+    "j3",
+    "r1",
+    "r2",
+    "r3"
+  ],
+  "directions": [
+    "DOWN",
+    "LEFT",
+    "RIGHT",
+    "UP"
+  ],
+  "unique_streams": 32
+}
