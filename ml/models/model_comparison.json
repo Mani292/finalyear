@@ -1,0 +1,79 @@
+{
+  "feature_cols": [
+    "car_5min",
+    "motorbike_5min",
+    "bus_5min",
+    "truck_5min",
+    "total_vehicles_5min",
+    "hour",
+    "minute",
+    "time_slot",
+    "is_morning_peak",
+    "is_evening_peak",
+    "previous_5min_volume",
+    "lag_1",
+    "lag_2",
+    "lag_3",
+    "lag_6",
+    "lag_12",
+    "rolling_15min_volume",
+    "rolling_mean_3",
+    "rolling_mean_6",
+    "rolling_mean_12",
+    "rolling_std_6",
+    "volume_change",
+    "pct_volume_change",
+    "hour_sin",
+    "hour_cos",
+    "minute_sin",
+    "minute_cos"
+  ],
+  "lookback": 12,
+  "horizons": [
+    15,
+    30,
+    60
+  ],
+  "models": [
+    {
+      "mae": 12.33,
+      "rmse": 16.15,
+      "r2": 0.7834,
+      "accuracy": 0.9614,
+      "f1": 0.6457,
+      "model": "CNN"
+    },
+    {
+      "mae": 13.23,
+      "rmse": 16.34,
+      "r2": 0.7779,
+      "accuracy": 0.9614,
+      "f1": 0.6457,
+      "model": "BiLSTM"
+    },
+    {
+      "mae": 12.41,
+      "rmse": 15.63,
+      "r2": 0.7971,
+      "accuracy": 0.9614,
+      "f1": 0.6457,
+      "model": "Transformer"
+    },
+    {
+      "mae": 12.12,
+      "rmse": 15.48,
+      "r2": 0.8005,
+      "accuracy": 0.9614,
+      "f1": 0.6457,
+      "model": "Hybrid"
+    },
+    {
+      "mae": 12.41,
+      "rmse": 16.17,
+      "r2": 0.7831,
+      "accuracy": 0.9439,
+      "f1": 0.6336,
+      "model": "RandomForest"
+    }
+  ]
+}

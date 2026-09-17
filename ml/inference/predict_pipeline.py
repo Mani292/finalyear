@@ -1,117 +1,145 @@
 """
-TrafficSense AI - Real-time Inference Pipeline
-File: ml/inference/predict_pipeline.py
-
-Decoupled inference service:
-Takes 12 historical 5-minute traffic observations -> Feature Engineering -> BiLSTM Inference -> Next 5-min Prediction -> Congestion Classification -> Alerts.
+Inference Pipeline for TrafficSense AI
+Location: ml/inference/predict_pipeline.py
 """
-
 import os
 import json
-import math
-from typing import Dict, List, Any, Tuple
-
-LOOKBACK = 12
+import torch
+import joblib
+import pandas as pd
+import numpy as np
+from ml.training.train_models import CNNModel, BiLSTMModel, TransformerModel, HybridModel, FEATURE_COLS, LOOKBACK
+from ml.inference.congestion import CongestionClassifier
 
 class TrafficPredictor:
-    def __init__(self, metadata_path: str = None):
-        if metadata_path is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            metadata_path = os.path.join(base_dir, "models", "model_metadata.json")
+    def __init__(self, models_dir: str = "ml/models"):
+        self.models_dir = models_dir
+        self.current_model_name = "Hybrid"
+        self.classifier = CongestionClassifier()
+        self.feature_cols = FEATURE_COLS
+        self.lookback = LOOKBACK
         
-        self.metadata = {}
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r', encoding='utf-8') as f:
+        # Load Scalers
+        scaler_X_path = os.path.join(models_dir, "scaler_X.pkl")
+        scaler_y_path = os.path.join(models_dir, "scaler_y.pkl")
+        
+        self.scaler_X = joblib.load(scaler_X_path) if os.path.exists(scaler_X_path) else None
+        self.scaler_y = joblib.load(scaler_y_path) if os.path.exists(scaler_y_path) else None
+
+        # Load PyTorch Models
+        F = len(self.feature_cols)
+        self.models = {}
+
+        cnn = CNNModel(F)
+        if os.path.exists(os.path.join(models_dir, "cnn_model.pt")):
+            cnn.load_state_dict(torch.load(os.path.join(models_dir, "cnn_model.pt")))
+            cnn.eval()
+            self.models["CNN"] = cnn
+
+        bilstm = BiLSTMModel(F)
+        if os.path.exists(os.path.join(models_dir, "bilstm_model.pt")):
+            bilstm.load_state_dict(torch.load(os.path.join(models_dir, "bilstm_model.pt")))
+            bilstm.eval()
+            self.models["BiLSTM"] = bilstm
+
+        trans = TransformerModel(F)
+        if os.path.exists(os.path.join(models_dir, "transformer_model.pt")):
+            trans.load_state_dict(torch.load(os.path.join(models_dir, "transformer_model.pt")))
+            trans.eval()
+            self.models["Transformer"] = trans
+
+        hybrid = HybridModel(F)
+        if os.path.exists(os.path.join(models_dir, "hybrid_model.pt")):
+            hybrid.load_state_dict(torch.load(os.path.join(models_dir, "hybrid_model.pt")))
+            hybrid.eval()
+            self.models["Hybrid"] = hybrid
+
+        # Load Random Forest
+        rf_path = os.path.join(models_dir, "randomforest_model.pkl")
+        if os.path.exists(rf_path):
+            self.models["RandomForest"] = joblib.load(rf_path)
+
+        # Load Comparison Metadata
+        meta_path = os.path.join(models_dir, "model_comparison.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r") as f:
                 self.metadata = json.load(f)
-        
-        self.min_log_vol = self.metadata.get("scaling_parameters", {}).get("min_log_volume", 2.0)
-        self.max_log_vol = self.metadata.get("scaling_parameters", {}).get("max_log_volume", 6.5)
-        self.vol_range = self.max_log_vol - self.min_log_vol if self.max_log_vol > self.min_log_vol else 1.0
+        else:
+            self.metadata = {"models": []}
 
-        weights = [math.exp(-1.0 + 0.12 * k) for k in range(LOOKBACK)]
-        w_sum = sum(weights)
-        self.norm_weights = [w / w_sum for w in weights]
+    def predict_for_stream(self, location: str, camera: str, direction: str, model_name: str = "Hybrid") -> dict:
+        feat_path = "datasets/processed/traffic_features.csv"
+        if not os.path.exists(feat_path):
+            from ml.preprocessing.create_traffic_features import create_features
+            create_features()
 
-    def predict_next_5min(self, historical_observations: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Receives at least 12 historical 5-minute observations for a single stream (loc, cam, dir).
-        Returns predicted volume, confidence, congestion level, and alerts.
-        """
-        if len(historical_observations) < LOOKBACK:
-            raise ValueError(f"Requires at least {LOOKBACK} observations, provided: {len(historical_observations)}")
+        df = pd.read_csv(feat_path)
+        sub = df[(df['location'] == location) & (df['camera'] == camera) & (df['direction'] == direction)]
 
-        recent_12 = historical_observations[-LOOKBACK:]
-        volumes = [float(obs.get('total_vehicles_5min', obs.get('volume', 0.0))) for obs in recent_12]
+        if len(sub) < self.lookback:
+            raise ValueError(f"Insufficient historical data for stream {location}/{camera}/{direction}")
 
-        # Log1p transformation & MinMax normalization
-        log_vals = [math.log1p(v) for v in volumes]
-        norm_vals = [(v - self.min_log_vol) / self.vol_range for v in log_vals]
+        sub = sub.sort_values('time').tail(self.lookback)
+        raw_feat = sub[self.feature_cols].values
 
-        # BiLSTM attention integration
-        pred_norm = sum(w * v for w, v in zip(self.norm_weights, norm_vals))
-        momentum = norm_vals[-1] - norm_vals[-3] if len(norm_vals) >= 3 else 0.0
-        pred_norm = pred_norm + 0.14 * momentum
-        pred_norm = max(0.0, min(1.3, pred_norm))
+        # Scale
+        flat_feat = raw_feat.reshape(-1, len(self.feature_cols))
+        scaled_feat = self.scaler_X.transform(flat_feat).reshape(1, self.lookback, len(self.feature_cols))
 
-        # Inverse transform
-        pred_log = (pred_norm * self.vol_range) + self.min_log_vol
-        pred_volume = round(max(5.0, math.expm1(pred_log)), 1)
+        model_key = model_name if model_name in self.models else "Hybrid"
+        model = self.models.get(model_key, self.models.get("Hybrid"))
 
-        current_vol = volumes[-1]
-        pct_change = round(((pred_volume - current_vol) / current_vol) * 100.0, 1) if current_vol > 0 else 0.0
+        if model_key == "RandomForest":
+            rf_in = scaled_feat[:, -1, :]
+            preds_raw = model.predict(rf_in)[0] # shape (3,)
+        else:
+            with torch.no_grad():
+                tensor_in = torch.tensor(scaled_feat, dtype=torch.float32)
+                preds_scaled = model(tensor_in).numpy()
+            preds_raw = self.scaler_y.inverse_transform(preds_scaled)[0]
 
-        congestion_status = self.classify_congestion(pred_volume)
-        alerts = self.generate_alerts(current_vol, pred_volume, pct_change)
+        vol_15 = max(0, float(preds_raw[0]))
+        vol_30 = max(0, float(preds_raw[1]))
+        vol_60 = max(0, float(preds_raw[2]))
+
+        c15 = self.classifier.classify(vol_15)
+        c30 = self.classifier.classify(vol_30)
+        c60 = self.classifier.classify(vol_60)
 
         return {
-            "current_volume": current_vol,
-            "predicted_volume": pred_volume,
-            "volume_change_pct": pct_change,
-            "congestion_status": congestion_status,
-            "alerts": alerts,
-            "historical_window_size": LOOKBACK,
-            "lookback_minutes": LOOKBACK * 5,
-            "model_version": "BiLSTM_V2"
+            "location": location,
+            "camera": camera,
+            "direction": direction,
+            "model_used": model_key,
+            "forecast": {
+                "15min": {
+                    "volume": round(vol_15, 1),
+                    "congestion": c15["congestion_level"],
+                    "confidence": c15["confidence"],
+                    "description": c15["description"]
+                },
+                "30min": {
+                    "volume": round(vol_30, 1),
+                    "congestion": c30["congestion_level"],
+                    "confidence": c30["confidence"],
+                    "description": c30["description"]
+                },
+                "60min": {
+                    "volume": round(vol_60, 1),
+                    "congestion": c60["congestion_level"],
+                    "confidence": c60["confidence"],
+                    "description": c60["description"]
+                }
+            }
         }
 
-    @staticmethod
-    def classify_congestion(volume: float, thresholds: Dict[str, float] = None) -> str:
-        """
-        Configurable congestion classification:
-        Low (<60), Moderate (60-120), High (120-180), Severe (>180)
-        """
-        if thresholds is None:
-            thresholds = {"low": 60, "moderate": 120, "high": 180}
-        
-        if volume < thresholds["low"]:
-            return "Low"
-        elif volume < thresholds["moderate"]:
-            return "Moderate"
-        elif volume < thresholds["high"]:
-            return "High"
-        else:
-            return "Severe"
+    def get_available_models(self) -> dict:
+        return {
+            "available_models": list(self.models.keys()),
+            "primary_model": "Hybrid",
+            "feature_count": len(self.feature_cols),
+            "lookback_steps": self.lookback
+        }
 
-    @staticmethod
-    def generate_alerts(current: float, predicted: float, pct_change: float) -> List[Dict[str, str]]:
-        alerts = []
-        if predicted >= 180:
-            alerts.append({
-                "severity": "CRITICAL",
-                "title": "Severe Congestion Warning",
-                "message": f"Predicted traffic volume {predicted:.0f} exceeds critical capacity limit."
-            })
-        elif predicted >= 130:
-            alerts.append({
-                "severity": "WARNING",
-                "title": "High Traffic Expected",
-                "message": f"Next 5-minute traffic approaching high density ({predicted:.0f} vehicles)."
-            })
-        
-        if pct_change >= 25.0:
-            alerts.append({
-                "severity": "ALERT",
-                "title": "Rapid Traffic Surge",
-                "message": f"Sudden traffic increase of +{pct_change:.1f}% forecasted in the upcoming 5 minutes."
-            })
-        return alerts
+    def get_model_comparison(self) -> dict:
+        return self.metadata
