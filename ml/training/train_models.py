@@ -11,7 +11,15 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, f1_score, accuracy_score
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    f1_score,
+    accuracy_score,
+    precision_score,
+    recall_score
+)
 
 LOOKBACK = 12
 HORIZONS = [3, 6, 12] # 15m, 30m, 60m
@@ -68,7 +76,6 @@ class CNNModel(nn.Module):
         self.fc = nn.Linear(128, output_dim)
 
     def forward(self, x):
-        # x shape: (batch, seq, feat) -> (batch, feat, seq)
         x = x.transpose(1, 2)
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.dropout(self.relu(self.conv2(x)))
@@ -101,20 +108,15 @@ class TransformerModel(nn.Module):
 class HybridModel(nn.Module):
     def __init__(self, input_dim, output_dim=3):
         super().__init__()
-        # CNN Branch
         self.cnn_conv = nn.Conv1d(input_dim, 32, kernel_size=3, padding=1)
         self.cnn_pool = nn.AdaptiveAvgPool1d(1)
 
-        # BiLSTM Branch
         self.bilstm = nn.LSTM(input_dim, 32, batch_first=True, bidirectional=True)
 
-        # Transformer Branch
         self.trans_proj = nn.Linear(input_dim, 32)
         encoder_layer = nn.TransformerEncoderLayer(d_model=32, nhead=2, dim_feedforward=64, dropout=0.1, batch_first=True)
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=1)
 
-        # Fusion
-        # CNN: 32, BiLSTM: 64, Transformer: 32 -> Total = 128
         self.fusion = nn.Sequential(
             nn.Linear(32 + 64 + 32, 64),
             nn.ReLU(),
@@ -123,25 +125,21 @@ class HybridModel(nn.Module):
         )
 
     def forward(self, x):
-        # CNN
         x_cnn = x.transpose(1, 2)
         cnn_feat = torch.relu(self.cnn_conv(x_cnn))
         cnn_feat = self.cnn_pool(cnn_feat).squeeze(-1)
 
-        # BiLSTM
         lstm_out, _ = self.bilstm(x)
         bilstm_feat = lstm_out[:, -1, :]
 
-        # Transformer
         trans_in = self.trans_proj(x)
         trans_out = self.transformer(trans_in)
         trans_feat = trans_out[:, -1, :]
 
-        # Concatenate
         combined = torch.cat([cnn_feat, bilstm_feat, trans_feat], dim=1)
         return self.fusion(combined)
 
-def train_torch_model(model, train_loader, val_loader, epochs=30, lr=0.001):
+def train_torch_model(model, train_loader, val_loader, epochs=40, lr=0.001):
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -179,22 +177,34 @@ def classify_vol(v):
     if v < 200: return 2 # HIGH
     return 3 # SEVERE
 
+def calculate_smape(y_true, y_pred):
+    denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
+    diff = np.abs(y_true - y_pred) / np.maximum(denom, 1e-5)
+    return float(np.mean(diff) * 100.0)
+
 def evaluate(y_true, y_pred):
     mae = float(mean_absolute_error(y_true, y_pred))
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     r2 = float(r2_score(y_true, y_pred))
+    smape = calculate_smape(y_true, y_pred)
 
     # Classification metrics
     c_true = [classify_vol(v) for v in y_true.flatten()]
     c_pred = [classify_vol(v) for v in y_pred.flatten()]
+
     acc = float(accuracy_score(c_true, c_pred))
+    prec = float(precision_score(c_true, c_pred, average='macro', zero_division=0))
+    rec = float(recall_score(c_true, c_pred, average='macro', zero_division=0))
     f1 = float(f1_score(c_true, c_pred, average='macro', zero_division=0))
 
     return {
         "mae": round(mae, 2),
         "rmse": round(rmse, 2),
         "r2": round(r2, 4),
+        "smape": round(smape, 2),
         "accuracy": round(acc, 4),
+        "precision": round(prec, 4),
+        "recall": round(rec, 4),
         "f1": round(f1, 4)
     }
 
@@ -207,12 +217,10 @@ def main():
     df = pd.read_csv(feat_path)
     X_seqs, y_seqs = build_sequences(df)
 
-    # Chronological Split (80% train, 20% test)
     split_idx = int(len(X_seqs) * 0.8)
     X_train_raw, X_test_raw = X_seqs[:split_idx], X_seqs[split_idx:]
     y_train_raw, y_test_raw = y_seqs[:split_idx], y_seqs[split_idx:]
 
-    # Scale Features
     N_tr, S, F = X_train_raw.shape
     X_train_flat = X_train_raw.reshape(-1, F)
     scaler_X = StandardScaler()
@@ -223,7 +231,6 @@ def main():
     N_te = X_test_raw.shape[0]
     X_test_scaled = scaler_X.transform(X_test_raw.reshape(-1, F)).reshape(N_te, S, F)
 
-    # Scale Targets
     scaler_y = StandardScaler()
     y_train_scaled = scaler_y.fit_transform(y_train_raw)
     y_test_scaled = scaler_y.transform(y_test_raw)
@@ -242,8 +249,6 @@ def main():
     }
 
     results = []
-    trained_models = {}
-
     os.makedirs("ml/models", exist_ok=True)
 
     for name, m in models.items():
@@ -260,9 +265,8 @@ def main():
 
         torch.save(m.state_dict(), f"ml/models/{name.lower()}_model.pt")
 
-    # Baseline Random Forest
     print("Training Random Forest baseline...")
-    rf_X_tr = X_train_scaled[:, -1, :] # last step feature
+    rf_X_tr = X_train_scaled[:, -1, :]
     rf = RandomForestRegressor(n_estimators=100, random_state=42)
     rf.fit(rf_X_tr, y_train_raw)
     rf_preds = rf.predict(X_test_scaled[:, -1, :])
