@@ -1,18 +1,24 @@
 import React, { useState } from 'react';
 import { api } from '../api/client';
 import { RouteRecommendationResponse } from '../api/types';
-import { Navigation, ShieldCheck, Clock, Sparkles } from 'lucide-react';
+import { Navigation, ShieldCheck, Clock, Sparkles, Globe } from 'lucide-react';
 
 export const RouteRecommendationPage: React.FC = () => {
   const [source, setSource] = useState('AlankarChowk');
   const [destination, setDestination] = useState('RTOChowk');
+  const [customSource, setCustomSource] = useState('');
+  const [customDestination, setCustomDestination] = useState('');
+  const [isNationwideMode, setIsNationwideMode] = useState(false);
   const [modelName, setModelName] = useState('Hybrid');
   const [routeRes, setRouteRes] = useState<RouteRecommendationResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleRecommend = () => {
     setLoading(true);
-    api.recommendRoute(source, destination, 'Immediate', modelName)
+    const finalSource = isNationwideMode && customSource.trim() ? customSource : source;
+    const finalDest = isNationwideMode && customDestination.trim() ? customDestination : destination;
+
+    api.recommendRoute(finalSource, finalDest, 'Immediate', modelName)
       .then((data) => {
         setRouteRes(data);
         setLoading(false);
@@ -22,37 +28,86 @@ export const RouteRecommendationPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Future-Aware Route Recommendation</h1>
-        <p className="text-sm text-slate-400">Routes evaluated using predicted future traffic at arrival times (T+5m, T+15m, T+30m)</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Future-Aware Route Recommendation</h1>
+          <p className="text-sm text-slate-400">Nationwide Routing & Future Congestion Evaluation (Google Routes API / OSM Provider Integrated)</p>
+        </div>
+
+        <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded-xl border border-slate-700 text-xs">
+          <button
+            onClick={() => setIsNationwideMode(false)}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+              !isNationwideMode ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Pune Nodes
+          </button>
+          <button
+            onClick={() => setIsNationwideMode(true)}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition-colors flex items-center gap-1 ${
+              isNationwideMode ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5" /> India Search
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-800 p-4 rounded-xl border border-slate-700">
-        <div>
-          <label className="block text-xs font-semibold text-slate-400 mb-1">SOURCE JUNCTION</label>
-          <select
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm focus:outline-none"
-          >
-            <option value="AlankarChowk">AlankarChowk</option>
-            <option value="JehangirChowk">JehangirChowk</option>
-            <option value="RTOChowk">RTOChowk</option>
-          </select>
-        </div>
+        {!isNationwideMode ? (
+          <>
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-1">SOURCE JUNCTION</label>
+              <select
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm focus:outline-none"
+              >
+                <option value="AlankarChowk">AlankarChowk (Pune)</option>
+                <option value="JehangirChowk">JehangirChowk (Pune)</option>
+                <option value="RTOChowk">RTOChowk (Pune)</option>
+              </select>
+            </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-400 mb-1">DESTINATION JUNCTION</label>
-          <select
-            value={destination}
-            onChange={(e) => setDestination(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm focus:outline-none"
-          >
-            <option value="RTOChowk">RTOChowk</option>
-            <option value="JehangirChowk">JehangirChowk</option>
-            <option value="AlankarChowk">AlankarChowk</option>
-          </select>
-        </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-1">DESTINATION JUNCTION</label>
+              <select
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm focus:outline-none"
+              >
+                <option value="RTOChowk">RTOChowk (Pune)</option>
+                <option value="JehangirChowk">JehangirChowk (Pune)</option>
+                <option value="AlankarChowk">AlankarChowk (Pune)</option>
+              </select>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-1">ORIGIN CITY / ADDRESS</label>
+              <input
+                type="text"
+                value={customSource}
+                onChange={(e) => setCustomSource(e.target.value)}
+                placeholder="e.g. Mumbai, Bengaluru, Delhi"
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-1">DESTINATION CITY / ADDRESS</label>
+              <input
+                type="text"
+                value={customDestination}
+                onChange={(e) => setCustomDestination(e.target.value)}
+                placeholder="e.g. Pune, Hyderabad, Chennai"
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-sm focus:outline-none"
+              />
+            </div>
+          </>
+        )}
 
         <div>
           <label className="block text-xs font-semibold text-slate-400 mb-1">PREDICTION MODEL</label>
@@ -86,7 +141,14 @@ export const RouteRecommendationPage: React.FC = () => {
           <div className="bg-emerald-950/40 p-5 rounded-xl border border-emerald-500/40 text-emerald-200 flex items-start gap-3">
             <Sparkles className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
             <div>
-              <h3 className="font-bold text-emerald-300 mb-1">Why this route is recommended?</h3>
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="font-bold text-emerald-300">Why this route is recommended?</h3>
+                {routeRes.routing_provider && (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-500/30">
+                    Provider: {routeRes.routing_provider}
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-emerald-200/90 leading-relaxed">{routeRes.explanation}</p>
             </div>
           </div>

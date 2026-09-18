@@ -40,8 +40,8 @@ export interface RouteDetail {
   predicted_congestion: string;
   predicted_future_volume: number;
   route_score: number;
-  camera_used: string;
-  direction_used: string;
+  camera_used?: string;
+  direction_used?: string;
 }
 
 export interface RouteRecommendationResponse {
@@ -49,6 +49,7 @@ export interface RouteRecommendationResponse {
   destination: string;
   departure_time: string;
   model_used: string;
+  routing_provider?: string;
   recommended_route: RouteDetail;
   alternative_routes: RouteDetail[];
   explanation: string;
